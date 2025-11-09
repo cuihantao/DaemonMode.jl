@@ -197,6 +197,26 @@ function send_backtrace(sock, bt, fname)
     end
 end
 
+"""
+    safe_print_to_socket(sock::IO, args...) :: Bool
+
+Safely write to socket with EPIPE error handling.
+Returns true if write succeeded, false if socket is broken.
+"""
+function safe_print_to_socket(sock::IO, args...)::Bool
+    try
+        print(sock, args...)
+        return true
+    catch e
+        if (e isa Base.IOError) && abs(e.code) == abs(Libc.EPIPE)
+            # Socket closed, client disconnected
+            return false
+        else
+            rethrow()
+        end
+    end
+end
+
 function serverReplyError(sock, e, bt, fname)
     try
         myshowerror(sock, e)
@@ -288,32 +308,47 @@ function serverRun(run, sock, shared, print_stack, fname, args, reviser)
                         task = @async begin
                             while isopen(out) && isopen(sock)
                                 text = String(take!(out))
-                                print(sock, text)
+                                # Safe write with EPIPE handling
+                                if !isempty(text)
+                                    if !safe_print_to_socket(sock, text)
+                                        # Socket closed, exit drain loop
+                                        break
+                                    end
+                                end
 
                                 if !running
                                     close(out)
                                 end
-                                sleep(0.3)
+                                sleep(0.05)  # Reduced from 0.3s for faster draining
                             end
                         end
                         task2 = @async begin
                             while isopen(err)  && isopen(sock)
                                 text = String(take!(err))
-                                print(sock, text)
+                                # Safe write with EPIPE handling
+                                if !isempty(text)
+                                    if !safe_print_to_socket(sock, text)
+                                        # Socket closed, exit drain loop
+                                        break
+                                    end
+                                end
 
                                 if !running
                                     close(err)
                                 end
-                                sleep(0.3)
+                                sleep(0.05)  # Reduced from 0.3s for faster draining
                             end
                         end
                         run(m)
                         running = false
 
-                        # while isopen(out) && isopen(err)
-                        #     println("Espero")
-                        #     sleep(0.1)
-                        # end
+                        # Wait for drain tasks to finish (with timeout)
+                        for i in 1:20  # Max 1 second (20 * 0.05s)
+                            if !isopen(out) && !isopen(err)
+                                break
+                            end
+                            sleep(0.05)
+                        end
                     catch e
                         running = false
                         e_str = string(e)
@@ -334,7 +369,7 @@ function serverRun(run, sock, shared, print_stack, fname, args, reviser)
                         text = String(take!(out))
 
                         if !isempty(text)
-                            print(sock, text)
+                            safe_print_to_socket(sock, text)
                         end
                     # Ignore possible error in output by finishing
                     catch e
@@ -343,7 +378,7 @@ function serverRun(run, sock, shared, print_stack, fname, args, reviser)
                         text = String(take!(err))
 
                         if !isempty(text)
-                            print(sock, text)
+                            safe_print_to_socket(sock, text)
                         end
                     # Ignore possible error in error by finishing
                     catch e
@@ -355,9 +390,9 @@ function serverRun(run, sock, shared, print_stack, fname, args, reviser)
 
         # Return depending of error code
         if !error
-            println(sock, token_ok_end)
+            safe_print_to_socket(sock, token_ok_end, "\n")
         else
-            println(sock, token_error_end)
+            safe_print_to_socket(sock, token_error_end, "\n")
         end
 
     catch e

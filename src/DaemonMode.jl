@@ -217,6 +217,31 @@ function safe_print_to_socket(sock::IO, args...)::Bool
     end
 end
 
+"""
+    safe_write_output(output::IO, content::AbstractString; newline::Bool=true) :: Bool
+
+Safely write to output stream with EPIPE error handling.
+Used by client when output may be piped to commands like 'head'.
+Returns true if write succeeded, false if pipe is broken.
+"""
+function safe_write_output(output::IO, content::AbstractString; newline::Bool=true)::Bool
+    try
+        if newline
+            println(output, content)
+        else
+            print(output, content)
+        end
+        return true
+    catch e
+        if (e isa Base.IOError) && abs(e.code) == abs(Libc.EPIPE)
+            # Output pipe closed (e.g., piped to head), ignore
+            return false
+        else
+            rethrow()
+        end
+    end
+end
+
 function serverReplyError(sock, e, bt, fname)
     try
         myshowerror(sock, e)
@@ -271,7 +296,17 @@ function serverRun(run, sock, shared, print_stack, fname, args, reviser)
     error = false
 
     try
-        reviser()
+        # Call reviser with EPIPE error handling for pipe-closed scenarios
+        try
+            reviser()
+        catch e
+            if (e isa Base.IOError) && abs(e.code) == abs(Libc.EPIPE)
+                # Pipe closed early (e.g., output piped to head), ignore reviser output errors
+                # Don't propagate - this is expected when client closes connection early
+            else
+                rethrow()
+            end
+        end
 
         if shared
             redirect_stdout(sock) do
@@ -542,7 +577,8 @@ function runexpr(expr::AbstractString ; output = stdout, port = PORT)
         line = readline(sock)
 
         while (length(line) < token_size || !occursin(token_end, line))
-            println(output, line)
+            # Continue reading even if output pipe closes (e.g., piped to head)
+            safe_write_output(output, line)
             line = readline(sock)
         end
 
@@ -585,7 +621,8 @@ function runfile(fname::AbstractString; args=String[], port = PORT, output=stdou
         token_size = length(token_ok_end)
 
         while (length(line) < token_size || !occursin(token_end, line))
-            println(output, line)
+            # Continue reading even if output pipe closes (e.g., piped to head)
+            safe_write_output(output, line)
             line = readline(sock)
         end
 
@@ -596,7 +633,7 @@ function runfile(fname::AbstractString; args=String[], port = PORT, output=stdou
         if length(line) > token_size
             end_line = replace(line, token_ok_end => "")
             end_line = replace(end_line, token_error_end => "")
-            print(output, end_line)
+            safe_write_output(output, end_line; newline=false)
         end
     catch e
         println(stderr, "Error, cannot connect with server. Is it running?")

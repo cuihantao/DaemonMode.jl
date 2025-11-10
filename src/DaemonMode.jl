@@ -319,6 +319,24 @@ function serverRun(run, sock, shared, print_stack, fname, args, reviser)
                 redirect_stderr(sock) do
                     m = Module()
                     Logging.global_logger(MinLevelLogger(FormatLogger(create_mylog(fname), sock), Logging.Info))
+
+                    # Import packages already loaded in Main (including extensions)
+                    # This allows isolated modules to use pre-loaded packages with extensions
+                    for (pkgid, mod) in Base.loaded_modules
+                        if mod === Main || pkgid.name == :Main
+                            continue
+                        end
+                        pkg_sym = Symbol(pkgid.name)
+                        # Import top-level packages that are in Main
+                        if isdefined(Main, pkg_sym) && getfield(Main, pkg_sym) === mod
+                            try
+                                Core.eval(m, :(const $pkg_sym = Main.$pkg_sym))
+                            catch
+                                # Skip if already defined or error
+                            end
+                        end
+                    end
+
                     add_include = Meta.parse("include(arg)=Base.include(@__MODULE__,arg)")
                     Base.eval(m, add_include)
                     add_eval = Meta.parse("eval(args)=Base.eval(args)")

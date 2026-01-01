@@ -269,6 +269,21 @@ Revise`, before starting the DaemonMode server:
 julia --startup-file=no -e 'using Revise; using DaemonMode; serve()'
 ```
 
+## Revise Error Warnings
+
+When Revise encounters errors while reloading modified packages (e.g., syntax errors), DaemonMode displays a warning but continues executing your script using the last successfully loaded version:
+
+```
+⚠️  WARNING: Revise encountered errors while reloading code
+  Package: MyPackage
+  File: /path/to/MyPackage/src/utils.jl
+  # Error @ /path/to/MyPackage/src/utils.jl:42
+  └ ── Expected `end`
+  → Using cached code from previous successful load
+```
+
+This allows you to continue testing while fixing the error. Once corrected and saved, Revise will reload automatically on the next run.
+
 # Features
 
 - [X] Performance, because packages are maintained in memory. This is especially interesting with common external packages like CSV.jl, DataFrames.jl, ...

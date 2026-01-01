@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/) and [Keep a
 Changelog](http://keepachangelog.com/).
 
+## Unreleased
+---
+
+### New
+* Revise error detection: DaemonMode now displays warnings when Revise encounters errors while reloading packages, preventing silent failures with cached code.
+
 ## 0.1.10 - (2021-11-11)
 ---
 

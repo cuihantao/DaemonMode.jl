@@ -308,6 +308,91 @@ function serverRun(run, sock, shared, print_stack, fname, args, reviser)
             end
         end
 
+        # Check for Revise errors and warn the user
+        if isdefined(Main, :Revise) && isdefined(Main.Revise, :queue_errors)
+            revise_errors = Main.Revise.queue_errors
+            if !isempty(revise_errors)
+                safe_print_to_socket(sock, "\n") || return
+                safe_print_to_socket(sock, Crayon(foreground=:yellow, bold=true)) || return
+
+                # Limit number of errors to display to prevent DoS
+                MAX_ERRORS_TO_DISPLAY = 5
+                error_count = length(revise_errors)
+
+                if error_count > MAX_ERRORS_TO_DISPLAY
+                    safe_print_to_socket(sock, "⚠️  WARNING: Revise encountered $error_count errors while reloading code (showing first $MAX_ERRORS_TO_DISPLAY)\n") || return
+                else
+                    safe_print_to_socket(sock, "⚠️  WARNING: Revise encountered errors while reloading code\n") || return
+                end
+                safe_print_to_socket(sock, Crayon(reset=true)) || return
+
+                errors_shown = 0
+                for ((pkgdata, file), (exc, _)) in revise_errors
+                    errors_shown += 1
+                    if errors_shown > MAX_ERRORS_TO_DISPLAY
+                        safe_print_to_socket(sock, Crayon(foreground=:yellow)) || return
+                        safe_print_to_socket(sock, "  ... and $(error_count - MAX_ERRORS_TO_DISPLAY) more errors (omitted)\n") || return
+                        safe_print_to_socket(sock, Crayon(reset=true)) || return
+                        break
+                    end
+
+                    safe_print_to_socket(sock, Crayon(foreground=:yellow)) || return
+
+                    # Sanitize package name and file path to prevent terminal injection
+                    pkg_name = string(pkgdata.info.id.name)
+                    # Remove ANSI escape sequences and control characters
+                    pkg_name = replace(pkg_name, r"\e\[[0-9;]*[a-zA-Z]" => "")
+                    pkg_name = replace(pkg_name, r"\e\][^\a]*\a" => "")
+                    pkg_name = replace(pkg_name, r"[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]" => "")
+
+                    file_safe = string(file)
+                    file_safe = replace(file_safe, r"\e\[[0-9;]*[a-zA-Z]" => "")
+                    file_safe = replace(file_safe, r"\e\][^\a]*\a" => "")
+                    file_safe = replace(file_safe, r"[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]" => "")
+
+                    safe_print_to_socket(sock, "  Package: ", pkg_name, "\n") || return
+                    safe_print_to_socket(sock, "  File: ", file_safe, "\n") || return
+
+                    # Format the error message using showerror for proper display
+                    error_io = IOBuffer()
+                    showerror(error_io, exc)
+                    error_str = String(take!(error_io))
+
+                    # Sanitize error message to prevent terminal injection
+                    error_str = replace(error_str, r"\e\[[0-9;]*[a-zA-Z]" => "")
+                    error_str = replace(error_str, r"\e\][^\a]*\a" => "")
+                    error_str = replace(error_str, r"[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]" => "")
+
+                    # Extract just the key error lines (skip verbose details)
+                    error_lines = split(error_str, '\n')
+                    key_lines = String[]
+                    for line in error_lines
+                        # Include lines with location info or the actual error message
+                        if occursin("Error @", line) || occursin("Expected", line) || occursin("└──", line)
+                            push!(key_lines, "  " * strip(line))
+                            if length(key_lines) >= 2  # Limit to 2 most relevant lines
+                                break
+                            end
+                        end
+                    end
+
+                    if isempty(key_lines) && length(error_lines) > 0
+                        # Fallback: use first line
+                        push!(key_lines, "  " * strip(error_lines[1]))
+                    end
+
+                    for line in key_lines
+                        safe_print_to_socket(sock, line, "\n") || return
+                    end
+                    safe_print_to_socket(sock, Crayon(reset=true)) || return
+                end
+
+                safe_print_to_socket(sock, Crayon(foreground=:yellow)) || return
+                safe_print_to_socket(sock, "  → Using cached code from previous successful load\n\n") || return
+                safe_print_to_socket(sock, Crayon(reset=true)) || return
+            end
+        end
+
         if shared
             redirect_stdout(sock) do
                 redirect_stderr(sock) do

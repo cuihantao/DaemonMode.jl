@@ -184,3 +184,6 @@ end
     @test endswith(l[1], joinpath("test", "fileandline.jl"))
     @test l[2] == "7"
 end
+
+# Include Revise error detection tests
+include("test_revise_errors.jl")

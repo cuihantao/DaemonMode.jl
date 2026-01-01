@@ -177,7 +177,8 @@ function send_backtrace(sock, bt, fname)
         fullname = joinpath(pwd(), fname)
     end
 
-    for (i, stack) in enumerate(stacks)
+    frame_num = 0
+    for stack in stacks
         file = String(stack.file)
 
         if occursin("string", file) && !isempty(fullname)
@@ -188,7 +189,13 @@ function send_backtrace(sock, bt, fname)
             return
         end
 
-        print(sock, " [$i] ")
+        # Skip DaemonMode internal frames - they're not useful for debugging user scripts
+        if occursin("DaemonMode.jl", file) || occursin("DaemonMode/src", file)
+            continue
+        end
+
+        frame_num += 1
+        print(sock, " [$frame_num] ")
 
         print(sock, BOLD, stack.func)
         print(sock, Crayon(reset=true), " at ")
